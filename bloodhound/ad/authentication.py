@@ -102,12 +102,20 @@ class ADAuthentication(object):
                         get_info=ALL,
                         tls=tls
                     )
+                    server_hostname = Server(
+                        "%s://%s:3269" % (protocol,hostname),
+                        use_ssl=True,
+                        get_info=ALL,
+                        tls=tls
+                    )
                 else:
                     # Ldap SSL (no channel binding)
                     server = Server("%s://%s:3269" % (protocol, ip), get_info=ALL)
+                    server_hostname = Server("%s://%s:3269" % (protocol, hostname), get_info=ALL)
             else:
                 # Plain LDAP
                 server = Server("%s://%s:3268" % (protocol, ip), get_info=ALL)
+                server_hostname = Server("%s://%s:3268" % (protocol, hostname), get_info=ALL)
         else: # no GC specified
             if self.ldap_channel_binding is True:
                 if not hasattr(ldap3, 'TLS_CHANNEL_BINDING'):
@@ -122,8 +130,15 @@ class ADAuthentication(object):
                     get_info=ALL,
                     tls=tls
                 )
+                server_hostname = Server(
+                    "%s://%s" % (protocol,hostname),
+                    use_ssl=True,
+                    get_info=ALL,
+                    tls=tls
+                )
             else: # No LDAP Channel Binding
                 server = Server("%s://%s" % (protocol, ip), get_info=ALL)
+                server_hostname = Server("%s://%s" % (protocol, hostname), get_info=ALL)
         # ldap3 supports auth with the NT hash. LM hash is actually ignored since only NTLMv2 is used.
         if self.nt_hash != '':
             if self.lm_hash != '':
@@ -161,6 +176,18 @@ class ADAuthentication(object):
                 conn = Connection(server, user=ldaplogin, password=ldappass, authentication=NTLM, auto_referrals=False, receive_timeout=60, auto_range=True, **channel_binding)
             else:
                 conn = Connection(server, user=ldaplogin, auto_referrals=False, password=ldappass, authentication=NTLM, receive_timeout=60, auto_range=True)
+            bound = conn.bind()
+        if not bound and self.auth_method in ('auto','digest'):
+            conn = Connection(server_hostname, auto_referrals=False, receive_timeout=60, auto_range=True, authentication = SASL, sasl_mechanism = 'DIGEST-MD5', sasl_credentials = (self.userdomain, self.username, ldappass, None, 'sign'))
+            logging.debug('Authenticating to LDAP server with Digest-MD5')
+            if self.ldap_channel_binding:
+                from ldap3 import TLS_CHANNEL_BINDING
+                logging.debug("Using LDAPS channel binding")
+                protocol = 'ldaps'
+                channel_binding = {"channel_binding": TLS_CHANNEL_BINDING}
+                conn = Connection(server_hostname, auto_referrals=False, receive_timeout=60, auto_range=True, authentication = SASL, sasl_mechanism = 'DIGEST-MD5', sasl_credentials = (self.userdomain, self.username, ldappass, None, 'sign'), **channel_binding)
+            else:
+                conn = Connection(server_hostname, auto_referrals=False, receive_timeout=60, auto_range=True, authentication = SASL, sasl_mechanism = 'DIGEST-MD5', sasl_credentials = (self.userdomain, self.username, ldappass, None, 'sign'))
             bound = conn.bind()
 
         if not bound:
